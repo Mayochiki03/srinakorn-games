@@ -1,0 +1,15 @@
+{
+  "name": "srinakhon-games",
+  "version": "2.0.0",
+  "description": "เว็บอัปเดตผลการแข่งขันกีฬาศรีนครเกมส์ ครั้งที่ 30 (เก็บข้อมูลบน MongoDB Atlas)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "mongodb": "^7.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
