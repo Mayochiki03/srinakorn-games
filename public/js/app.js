@@ -201,9 +201,13 @@
     );
     const chipKeySignature = chips.map((c) => c.key).join('|');
 
+    // only tear down and rebuild the buttons if the list of sports actually
+    // changed (e.g. an admin added a new sport) — otherwise every 20s poll
+    // was destroying and recreating every chip button for no reason, which
+    // is what made the filter row feel glitchy/unstable while in use
     if (chipKeySignature !== lastChipKeys) {
       lastChipKeys = chipKeySignature;
-      el.innerHTML = '<div class="chip-indicator" id="chipIndicator"></div>';
+      el.innerHTML = '';
       chips.forEach((c) => {
         const btn = document.createElement('button');
         btn.className = 'chip';
@@ -217,34 +221,6 @@
     el.querySelectorAll('.chip').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.key === state.filter);
     });
-    requestAnimationFrame(slideChipIndicator);
-  }
-
-  function slideChipIndicator() {
-    const el = document.getElementById('filters');
-    const indicator = document.getElementById('chipIndicator');
-    const active = el && el.querySelector('.chip.active');
-    if (!indicator || !active) return;
-    indicator.style.width = active.offsetWidth + 'px';
-    indicator.style.transform = `translateX(${active.offsetLeft}px)`;
-    indicator.style.opacity = '1';
-  }
-
-  function liveRingSVG(m) {
-    if (m.status !== 'live' || !m.date || !m.time) return '';
-    const start = new Date(`${m.date}T${m.time}:00+07:00`);
-    const end = new Date(start.getTime() + (m.durationMin || 30) * 60000);
-    const pct = Math.max(0, Math.min(1, (Date.now() - start.getTime()) / (end.getTime() - start.getTime())));
-    const r = 6;
-    const c = 2 * Math.PI * r;
-    const offset = c * (1 - pct);
-    return `
-    <svg class="live-ring" width="15" height="15" viewBox="0 0 16 16">
-      <circle cx="8" cy="8" r="${r}" fill="none" stroke="rgba(255,77,109,0.25)" stroke-width="2.5"/>
-      <circle cx="8" cy="8" r="${r}" fill="none" stroke="var(--live-red)" stroke-width="2.5"
-        stroke-dasharray="${c}" stroke-dashoffset="${offset}" stroke-linecap="round"
-        transform="rotate(-90 8 8)"/>
-    </svg>`;
   }
 
   function teamNameHTML(team, isWinner) {
@@ -266,7 +242,7 @@
     const scoreHTML = hasScore
       ? `<span>${m.score1}</span><span class="dash">:</span><span>${m.score2}</span>`
       : `<span class="score-empty">${m.status === 'live' ? '• • •' : 'VS'}</span>`;
-    const dot = m.status === 'live' ? liveRingSVG(m) : '';
+    const dot = m.status === 'live' ? '<span class="pulse-dot" style="margin-right:4px"></span>' : '';
     const confirmedFinished = m.status === 'finished' && m.winner;
     const justChanged = justChangedIds.has(m.id);
 
@@ -449,7 +425,6 @@
     });
 
     const ranked = Object.values(table).sort((a, b) => b.points - a.points || b.win - a.win);
-    const maxPoints = Math.max(1, ...ranked.map((t) => t.points));
     const el = document.getElementById('standings');
     el.innerHTML = ranked.map((t, i) => `
       <div class="standing-card ${i === 0 && t.played ? 'standing-top' : ''}">
@@ -460,19 +435,12 @@
         </div>
         <div class="standing-points">${t.points}</div>
         <div class="standing-points-lbl">คะแนนสะสม (จากผลที่ยืนยันแล้ว)</div>
-        <div class="standing-bar"><div class="standing-bar-fill" data-target="${(t.points / maxPoints) * 100}" style="width:0%; background:${t.color}"></div></div>
         <div class="standing-row"><span>ลงแข่ง</span><b>${t.played}</b></div>
         <div class="standing-row"><span>ชนะ</span><b>${t.win}</b></div>
         <div class="standing-row"><span>เสมอ</span><b>${t.draw}</b></div>
         <div class="standing-row"><span>แพ้</span><b>${t.lose}</b></div>
       </div>
     `).join('');
-
-    requestAnimationFrame(() => {
-      el.querySelectorAll('.standing-bar-fill').forEach((bar) => {
-        bar.style.width = bar.dataset.target + '%';
-      });
-    });
   }
 
   // manually-declared champions per sport (set by a teacher in the admin panel) —
@@ -535,10 +503,20 @@
       return;
     }
 
+    // remember which date-tabs are currently open BEFORE we rebuild the list,
+    // so a 20-second auto-refresh doesn't slam shut a tab the user opened by hand
+    const existingGroups = el.querySelectorAll('.day-group');
+    const isFirstRender = existingGroups.length === 0;
+    const openDates = new Set(
+      [...existingGroups].filter((g) => g.classList.contains('open')).map((g) => g.dataset.date)
+    );
+
     el.innerHTML = dates.map((d) => {
       const t = formatThaiDateLong(d);
       const isToday = d === today;
-      const shouldOpen = isToday || d === nearestUpcomingDate;
+      // first time the page loads: open today + the nearest upcoming date by default.
+      // every refresh after that: keep exactly whatever the user already had open/closed.
+      const shouldOpen = isFirstRender ? (isToday || d === nearestUpcomingDate) : openDates.has(d);
       const items = byDate[d];
       return `
       <div class="day-group ${isToday ? 'day-today' : ''} ${shouldOpen ? 'open' : ''}" data-date="${d}">
@@ -589,5 +567,36 @@
   loadData();
   pollTimer = setInterval(loadData, 20000);
   window.addEventListener('load', setupScrollReveal);
-  window.addEventListener('resize', () => requestAnimationFrame(slideChipIndicator));
+
+
+  // ==================== EXTRA FLOATIES (ประกายลอยใหม่) ====================
+  function createExtraFloaties() {
+    if (document.querySelector('.extra-floaties')) return; // ป้องกันซ้ำ
+
+    const container = document.createElement('div');
+    container.className = 'extra-floaties';
+
+    const symbols = ['✦', '★', '⚡', '🏅', '🔥', '🌟', '🏆', '⚽', '🏸', '🏀'];
+
+    for (let i = 0; i < 22; i++) {
+      const span = document.createElement('span');
+      span.textContent = symbols[Math.floor(Math.random() * symbols.length)];
+      
+      span.style.left = Math.random() * 100 + '%';
+      span.style.animationDuration = (14 + Math.random() * 28) + 's';
+      span.style.animationDelay = '-' + (Math.random() * 35) + 's';
+      span.style.fontSize = (14 + Math.random() * 20) + 'px';
+      span.style.opacity = 0.07 + Math.random() * 0.16;
+      
+      container.appendChild(span);
+    }
+
+    document.body.appendChild(container);
+  }
+
+  // เรียกใช้เมื่อหน้าโหลดเสร็จ
+  window.addEventListener('load', () => {
+    createExtraFloaties();
+  });
+
 })();
