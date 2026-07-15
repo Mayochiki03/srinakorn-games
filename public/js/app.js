@@ -106,7 +106,10 @@
 
   function snapshotScores(matches) {
     prevScoresById = {};
-    matches.forEach((m) => { prevScoresById[m.id] = `${m.score1}|${m.score2}`; });
+    matches.forEach((m) => {
+      if (m.type === 'ffa') prevScoresById[m.id] = JSON.stringify(m.scores || {});
+      else prevScoresById[m.id] = `${m.score1}|${m.score2}`;
+    });
   }
 
   let justChangedIds = new Set();
@@ -114,11 +117,16 @@
     if (!prevScoresById) return;
     justChangedIds = new Set();
     matches.forEach((m) => {
-      if (m.type !== 'match') return;
-      const prev = prevScoresById[m.id];
-      const now = `${m.score1}|${m.score2}`;
-      if (prev !== undefined && prev !== now && (m.score1 !== null || m.score2 !== null)) {
-        justChangedIds.add(m.id);
+      if (m.type === 'match') {
+        const prev = prevScoresById[m.id];
+        const now = `${m.score1}|${m.score2}`;
+        if (prev !== undefined && prev !== now && (m.score1 !== null || m.score2 !== null)) {
+          justChangedIds.add(m.id);
+        }
+      } else if (m.type === 'ffa') {
+        const prev = prevScoresById[m.id];
+        const now = JSON.stringify(m.scores || {});
+        if (prev !== undefined && prev !== now) justChangedIds.add(m.id);
       }
     });
   }
@@ -126,7 +134,7 @@
   function detectCelebrations(matches) {
     if (!prevStatusById) return;
     matches.forEach((m) => {
-      if (m.type !== 'match') return;
+      if (m.type !== 'match' && m.type !== 'ffa') return;
       const was = prevStatusById[m.id];
       if (was && was !== 'finished' && m.status === 'finished' && m.winner) {
         celebrate(m);
@@ -136,14 +144,27 @@
 
   // ---------- sport-themed celebration: confetti burst + toast ----------
   function celebrate(m) {
-    const colorMap = { team1: m.team1.color, team2: m.team2.color, draw: '#FFC94A' };
-    const color = colorMap[m.winner] || '#FFC94A';
-    spawnConfetti(color);
-
     const meta = sportMeta(m.sport);
-    const label = m.winner === 'draw'
-      ? `${meta.icon} ${m.team1.name} เสมอกับ ${m.team2.name} · ${meta.label}`
-      : `🏆 ${m.winner === 'team1' ? m.team1.name : m.team2.name} ชนะ ${meta.label}!`;
+    let color = '#FFC94A';
+    let label;
+
+    if (m.type === 'ffa') {
+      if (m.winner === 'tie') {
+        label = `${meta.icon} ผลเสมอ · ${meta.label}${m.title ? ' · ' + m.title : ''}`;
+      } else {
+        const team = state.data.teams[m.winner];
+        color = (team && team.color) || color;
+        label = `🏆 ${(team && team.name) || m.winner} ชนะ ${meta.label}${m.title ? ' · ' + m.title : ''}!`;
+      }
+    } else {
+      const colorMap = { team1: m.team1.color, team2: m.team2.color, draw: '#FFC94A' };
+      color = colorMap[m.winner] || '#FFC94A';
+      label = m.winner === 'draw'
+        ? `${meta.icon} ${m.team1.name} เสมอกับ ${m.team2.name} · ${meta.label}`
+        : `🏆 ${m.winner === 'team1' ? m.team1.name : m.team2.name} ชนะ ${meta.label}!`;
+    }
+
+    spawnConfetti(color);
 
     const toast = document.createElement('div');
     toast.className = 'celebrate-toast';
@@ -293,8 +314,53 @@
     </div>`;
   }
 
+  // free-for-all: several colors compete in the same heat at once (e.g.
+  // folk games like ตีกอล์ฟคนจน) and only one side wins the round.
+  function ffaCard(m) {
+    const statusLabel = { live: 'สด', scheduled: 'เร็วๆ นี้', finished: 'จบแล้ว' }[m.status];
+    const statusClass = { live: 'status-live', scheduled: 'status-scheduled', finished: 'status-finished' }[m.status];
+    const dot = m.status === 'live' ? '<span class="pulse-dot" style="margin-right:4px"></span>' : '';
+    const confirmedFinished = m.status === 'finished' && m.winner && m.winner !== 'tie';
+    const parts = m.participants || [];
+    const teams = state.data.teams;
+    const justChanged = justChangedIds.has(m.id);
+
+    const rows = parts.map((k) => {
+      const t = teams[k];
+      if (!t) return '';
+      const score = m.scores ? m.scores[k] : null;
+      const isWinner = confirmedFinished && m.winner === k;
+      return `
+        <div class="ffa-row${isWinner ? ' ffa-row-winner' : ''}">
+          <span class="team-swatch" style="background:${t.color}"></span>
+          ${teamNameHTML(t, isWinner)}
+          <span class="ffa-score${justChanged ? ' score-pop' : ''}">${score === null || score === undefined ? '-' : score}</span>
+        </div>`;
+    }).join('');
+
+    return `
+    <div class="mcard ffa-card ${m.status === 'live' ? 'is-live' : ''}">
+      <div class="mcard-top">
+        <span class="mcard-sport">${metaLine(m)}</span>
+        <span class="status-pill ${statusClass}">${dot}${statusLabel}</span>
+      </div>
+      ${m.title ? `<p class="ecard-title" style="margin:0 0 8px">${m.title}</p>` : ''}
+      <div class="ffa-grid">${rows}</div>
+      ${m.status === 'finished' && m.winner === 'tie' ? `<div style="text-align:center;font-size:11px;color:var(--cream-dim);margin-top:6px">ผลเสมอ</div>` : ''}
+      <div class="mcard-meta">
+        <span>📅 ${formatThaiDateShort(m.date)}</span>
+        <span>🕒 ${m.time} น.</span>
+        <span>📍 ${venueOf(m)}</span>
+        ${m.referee ? `<span>👤 ${m.referee}</span>` : ''}
+        ${m.note ? `<span>📝 ${m.note}</span>` : ''}
+      </div>
+    </div>`;
+  }
+
   function cardFor(m) {
-    return m.type === 'match' ? matchCard(m) : eventCard(m);
+    if (m.type === 'match') return matchCard(m);
+    if (m.type === 'ffa') return ffaCard(m);
+    return eventCard(m);
   }
 
   function animateNumber(el, newVal) {
@@ -414,14 +480,33 @@
     Object.entries(teamsMeta).forEach(([k, v]) => { keyByName[v.name] = k; });
 
     state.data.matches.forEach((m) => {
-      if (m.type !== 'match' || m.status !== 'finished' || !m.winner) return;
-      const k1 = keyByName[m.team1.name];
-      const k2 = keyByName[m.team2.name];
-      if (!k1 || !k2) return;
-      table[k1].played++; table[k2].played++;
-      if (m.winner === 'team1') { table[k1].win++; table[k1].points += 3; table[k2].lose++; }
-      else if (m.winner === 'team2') { table[k2].win++; table[k2].points += 3; table[k1].lose++; }
-      else { table[k1].draw++; table[k2].draw++; table[k1].points += 1; table[k2].points += 1; }
+      if (m.status !== 'finished' || !m.winner) return;
+
+      if (m.type === 'match') {
+        const k1 = keyByName[m.team1.name];
+        const k2 = keyByName[m.team2.name];
+        if (!k1 || !k2) return;
+        table[k1].played++; table[k2].played++;
+        if (m.winner === 'team1') { table[k1].win++; table[k1].points += 3; table[k2].lose++; }
+        else if (m.winner === 'team2') { table[k2].win++; table[k2].points += 3; table[k1].lose++; }
+        else { table[k1].draw++; table[k2].draw++; table[k1].points += 1; table[k2].points += 1; }
+        return;
+      }
+
+      if (m.type === 'ffa') {
+        const parts = m.participants || [];
+        parts.forEach((k) => { if (table[k]) table[k].played++; });
+        if (m.winner === 'tie') {
+          // no points awarded on a tie — a teacher can still override with a
+          // manual winner if the rules for that game call for one
+          return;
+        }
+        if (table[m.winner]) {
+          table[m.winner].win++;
+          table[m.winner].points += Number(m.points) || 0;
+        }
+        parts.forEach((k) => { if (k !== m.winner && table[k]) table[k].lose++; });
+      }
     });
 
     const ranked = Object.values(table).sort((a, b) => b.points - a.points || b.win - a.win);

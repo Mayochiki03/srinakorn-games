@@ -145,6 +145,53 @@
       </div>`;
     }
 
+    if (m.type === 'ffa') {
+      const parts = m.participants || [];
+      const teams = state.data.teams;
+      const winnerBadge = (m.status === 'finished' && m.winner)
+        ? `<span class="winner-badge">🏆 ${m.winner === 'tie' ? 'เสมอ' : ((teams[m.winner] && teams[m.winner].name) || m.winner)}${m.winnerOverride ? ' (ระบุเอง)' : ''}</span>`
+        : '';
+      const scoreInputs = parts.map((k) => {
+        const t = teams[k];
+        if (!t) return '';
+        const val = m.scores ? m.scores[k] : null;
+        return `
+          <div class="arow-teams">
+            <span class="arow-swatch" style="background:${t.color}"></span>
+            <span class="arow-team-name">${t.name}</span>
+            <input class="score-input" type="number" min="0" placeholder="-" value="${val ?? ''}" data-id="${m.id}" data-field="score_${k}" />
+          </div>`;
+      }).join('');
+      const winnerOptions = parts
+        .map((k) => `<option value="${k}" ${m.winnerOverride === k ? 'selected' : ''}>${teams[k] ? teams[k].name : k} ชนะ</option>`)
+        .join('');
+
+      return `
+      <div class="arow">
+        <div class="arow-sport"><span>${metaLine}</span><span>${m.referee || ''}</span></div>
+        ${m.title ? `<div class="arow-event-title">${m.title}</div>` : ''}
+        ${scoreInputs}
+        <select class="status-select" data-id="${m.id}" data-field="winnerOverride" title="กำหนดผู้ชนะเอง (ไม่บังคับ)">
+          <option value="" ${!m.winnerOverride ? 'selected' : ''}>ผู้ชนะ: อัตโนมัติจากคะแนน</option>
+          ${winnerOptions}
+          <option value="tie" ${m.winnerOverride === 'tie' ? 'selected' : ''}>เสมอ (ไม่มีผู้ชนะ)</option>
+        </select>
+        <input class="score-input" type="number" min="0" style="width:64px" value="${m.points ?? 3}" data-id="${m.id}" data-field="points" title="คะแนนที่ผู้ชนะจะได้" />
+        <select class="status-select" data-id="${m.id}" data-field="statusOverride">
+          <option value="" ${!m.statusOverride ? 'selected' : ''}>อัตโนมัติ (${statusLabel(m.status)})</option>
+          <option value="scheduled" ${m.statusOverride === 'scheduled' ? 'selected' : ''}>ยังไม่เริ่ม</option>
+          <option value="live" ${m.statusOverride === 'live' ? 'selected' : ''}>กำลังแข่งขัน</option>
+          <option value="finished" ${m.statusOverride === 'finished' ? 'selected' : ''}>✅ จบแล้ว (ประกาศผล)</option>
+        </select>
+        <button class="save-row-btn" data-save="${m.id}">บันทึก</button>
+        ${winnerBadge}
+        <div class="arow-actions">
+          <button class="icon-btn" data-edit="${m.id}">✎ แก้ไข</button>
+          <button class="icon-btn danger" data-del="${m.id}">🗑 ลบ</button>
+        </div>
+      </div>`;
+    }
+
     const hasScore = m.score1 !== null && m.score1 !== undefined && m.score2 !== null && m.score2 !== undefined;
     const winnerNow = m.winnerOverride || (hasScore ? null : null);
     let winnerNote = '';
@@ -226,7 +273,7 @@
         scope.querySelectorAll('[data-field]').forEach((input) => {
           const field = input.getAttribute('data-field');
           let val = input.value;
-          if (field === 'score1' || field === 'score2') {
+          if (field === 'score1' || field === 'score2' || field.startsWith('score_') || field === 'points') {
             payload[field] = val === '' ? null : Number(val);
           } else {
             payload[field] = val === '' ? null : val;
@@ -272,11 +319,27 @@
     document.getElementById('fTeam2').selectedIndex = 1;
   }
 
+  function populateFfaParticipants(checkedKeys) {
+    const checked = checkedKeys || Object.keys(state.data.teams); // default: everyone races
+    const el = document.getElementById('ffParticipants');
+    el.innerHTML = Object.entries(state.data.teams).map(([key, t]) => `
+      <label>
+        <input type="checkbox" value="${key}" ${checked.includes(key) ? 'checked' : ''} />
+        ${t.name}
+      </label>
+    `).join('');
+  }
+
+  function getCheckedParticipants() {
+    return [...document.querySelectorAll('#ffParticipants input[type="checkbox"]:checked')].map((c) => c.value);
+  }
+
   function setModalType(type) {
     modalType = type;
     document.querySelectorAll('.type-btn').forEach((b) => b.classList.toggle('active', b.dataset.type === type));
     document.getElementById('matchFields').style.display = type === 'match' ? '' : 'none';
     document.getElementById('eventFields').style.display = type === 'event' ? '' : 'none';
+    document.getElementById('ffaFields').style.display = type === 'ffa' ? '' : 'none';
   }
 
   function openModal(editId) {
@@ -301,8 +364,14 @@
       if (m.type === 'match') {
         document.getElementById('fTeam1').value = teamKeyByName(m.team1.name) || '';
         document.getElementById('fTeam2').value = teamKeyByName(m.team2.name) || '';
+        populateFfaParticipants();
+      } else if (m.type === 'ffa') {
+        document.getElementById('ffTitle').value = m.title || '';
+        document.getElementById('ffPoints').value = m.points ?? 3;
+        populateFfaParticipants(m.participants || []);
       } else {
         document.getElementById('fTitle').value = m.title || '';
+        populateFfaParticipants();
       }
     } else {
       state.editingId = null;
@@ -317,6 +386,9 @@
       document.getElementById('fRound').value = '';
       document.getElementById('fNote').value = '';
       document.getElementById('fTitle').value = '';
+      document.getElementById('ffTitle').value = '';
+      document.getElementById('ffPoints').value = 3;
+      populateFfaParticipants();
     }
     modalBackdrop.style.display = 'flex';
   }
@@ -348,6 +420,18 @@
         errEl.textContent = 'ทีมทั้งสองฝั่งต้องเป็นคนละสีกัน';
         return;
       }
+    } else if (modalType === 'ffa') {
+      payload.title = document.getElementById('ffTitle').value.trim();
+      if (!payload.title) {
+        errEl.textContent = 'กรุณาระบุชื่อกิจกรรม/เกม';
+        return;
+      }
+      payload.participants = getCheckedParticipants();
+      if (payload.participants.length < 2) {
+        errEl.textContent = 'กรุณาเลือกสีที่เข้าแข่งขันอย่างน้อย 2 สี';
+        return;
+      }
+      payload.points = Number(document.getElementById('ffPoints').value) || 3;
     } else {
       payload.title = document.getElementById('fTitle').value.trim();
       if (!payload.title) {

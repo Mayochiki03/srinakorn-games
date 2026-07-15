@@ -61,7 +61,8 @@
     <div class="modal-body">
       <div class="type-toggle" id="typeToggle">
         <button class="type-btn active" data-type="match">🆚 การแข่งขัน (มีคู่แข่ง+คะแนน)</button>
-        <button class="type-btn" data-type="event">🎯 กิจกรรม (ไม่มีคู่แข่ง)</button>
+        <button class="type-btn" data-type="ffa">🎯 กีฬาพื้นบ้าน (แข่งพร้อมกันหลายสี)</button>
+        <button class="type-btn" data-type="event">🎪 กิจกรรม (ไม่มีคู่แข่ง)</button>
       </div>
 
       <div class="form-grid">
@@ -117,6 +118,21 @@
         <label class="field field-wide">
           <span>ชื่อกิจกรรม</span>
           <input id="fTitle" type="text" placeholder="เช่น E-SPORT รอบชิงชนะเลิศ ม.ต้น" />
+        </label>
+      </div>
+
+      <div id="ffaFields" class="form-grid" style="display:none">
+        <label class="field field-wide">
+          <span>ชื่อกิจกรรม/เกม</span>
+          <input id="ffTitle" type="text" placeholder="เช่น ตีกอล์ฟคนจน" />
+        </label>
+        <label class="field field-wide">
+          <span>สีที่เข้าแข่งขันพร้อมกัน (เลือกอย่างน้อย 2 สี)</span>
+          <div id="ffParticipants" class="checkbox-row"></div>
+        </label>
+        <label class="field">
+          <span>คะแนนที่สีผู้ชนะจะได้</span>
+          <input id="ffPoints" type="number" value="3" min="0" />
         </label>
       </div>
     </div>

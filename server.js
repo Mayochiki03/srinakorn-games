@@ -85,7 +85,7 @@ function migrate(data) {
 
   data.matches = data.matches.map((m) => {
     const sportMeta = data.sports[m.sport] || {};
-    return {
+    const merged = {
       category: null,
       note: null,
       referee: null,
@@ -95,6 +95,18 @@ function migrate(data) {
       ...m,
       venue: m.venue || sportMeta.venue || null,
     };
+    // "ffa" (free-for-all): several colors compete at once in the same heat
+    // (e.g. ตีกอล์ฟคนจน, กีฬาพื้นบ้าน) and only one side wins — fill in sane
+    // defaults so older documents saved before this feature still work.
+    if (merged.type === 'ffa') {
+      merged.participants = (Array.isArray(merged.participants) && merged.participants.length)
+        ? merged.participants.filter((k) => VALID_TEAM_KEYS.includes(k))
+        : VALID_TEAM_KEYS.slice();
+      const oldScores = merged.scores || {};
+      merged.scores = Object.fromEntries(merged.participants.map((k) => [k, oldScores[k] ?? null]));
+      merged.points = (merged.points === undefined || merged.points === null) ? 3 : Number(merged.points);
+    }
+    return merged;
   });
 
   return data;
@@ -179,13 +191,27 @@ function computeStatus(entry, now) {
 }
 
 function deriveWinner(entry) {
-  if (entry.type !== 'match') return null;
-  if (entry.winnerOverride) return entry.winnerOverride;
-  if (entry.score1 === null || entry.score1 === undefined) return null;
-  if (entry.score2 === null || entry.score2 === undefined) return null;
-  if (entry.score1 > entry.score2) return 'team1';
-  if (entry.score2 > entry.score1) return 'team2';
-  return 'draw';
+  if (entry.type === 'match') {
+    if (entry.winnerOverride) return entry.winnerOverride;
+    if (entry.score1 === null || entry.score1 === undefined) return null;
+    if (entry.score2 === null || entry.score2 === undefined) return null;
+    if (entry.score1 > entry.score2) return 'team1';
+    if (entry.score2 > entry.score1) return 'team2';
+    return 'draw';
+  }
+  if (entry.type === 'ffa') {
+    if (entry.winnerOverride) return entry.winnerOverride;
+    const parts = entry.participants || [];
+    const scores = entry.scores || {};
+    if (!parts.length) return null;
+    const vals = parts.map((k) => scores[k]);
+    if (vals.some((v) => v === null || v === undefined)) return null;
+    const max = Math.max(...vals);
+    const winners = parts.filter((k) => scores[k] === max);
+    if (winners.length > 1) return 'tie';
+    return winners[0];
+  }
+  return null;
 }
 
 function enrich(data) {
@@ -216,7 +242,7 @@ function slugify(label) {
 // ---------- validation ----------
 function validateMatchPayload(body, data, isCreate) {
   const errors = [];
-  const type = body.type === 'event' ? 'event' : 'match';
+  const type = (body.type === 'event' || body.type === 'ffa') ? body.type : 'match';
 
   if (isCreate) {
     if (!body.sport || !data.sports[body.sport]) errors.push('กรุณาเลือกชนิดกีฬาที่มีอยู่ในระบบ');
@@ -227,6 +253,14 @@ function validateMatchPayload(body, data, isCreate) {
     if (isCreate && !VALID_TEAM_KEYS.includes(body.team1Key)) errors.push('กรุณาเลือกสีทีมที่ 1');
     if (isCreate && !VALID_TEAM_KEYS.includes(body.team2Key)) errors.push('กรุณาเลือกสีทีมที่ 2');
     if (isCreate && body.team1Key && body.team1Key === body.team2Key) errors.push('ทีมทั้งสองฝั่งต้องเป็นคนละสีกัน');
+  } else if (type === 'ffa') {
+    if (isCreate) {
+      if (!body.title || !body.title.trim()) errors.push('กรุณาระบุชื่อกิจกรรม/เกม');
+      const parts = Array.isArray(body.participants)
+        ? [...new Set(body.participants.filter((k) => VALID_TEAM_KEYS.includes(k)))]
+        : [];
+      if (parts.length < 2) errors.push('กรุณาเลือกสีที่เข้าแข่งขันอย่างน้อย 2 สี');
+    }
   } else if (isCreate) {
     if (!body.title || !body.title.trim()) errors.push('กรุณาระบุชื่อกิจกรรม');
   }
@@ -324,7 +358,7 @@ const server = http.createServer(async (req, res) => {
       const errors = validateMatchPayload(body, data, true);
       if (errors.length) return sendJSON(res, 400, { error: errors.join(' / ') });
 
-      const type = body.type === 'event' ? 'event' : 'match';
+      const type = (body.type === 'event' || body.type === 'ffa') ? body.type : 'match';
       const sportMeta = data.sports[body.sport];
       const base = {
         id: newId(),
@@ -351,6 +385,16 @@ const server = http.createServer(async (req, res) => {
           score2: null,
           winnerOverride: null,
         };
+      } else if (type === 'ffa') {
+        const parts = [...new Set((body.participants || []).filter((k) => VALID_TEAM_KEYS.includes(k)))];
+        entry = {
+          ...base,
+          title: body.title.trim(),
+          participants: parts,
+          scores: Object.fromEntries(parts.map((k) => [k, null])),
+          winnerOverride: null,
+          points: Number(body.points) > 0 ? Number(body.points) : 3,
+        };
       } else {
         entry = { ...base, title: body.title.trim() };
       }
@@ -375,13 +419,34 @@ const server = http.createServer(async (req, res) => {
       const allowedSimple = [
         'category', 'round', 'date', 'time', 'durationMin', 'venue',
         'referee', 'note', 'statusOverride', 'score1', 'score2',
-        'winnerOverride', 'title', 'sport',
+        'winnerOverride', 'title', 'sport', 'points',
       ];
       for (const key of allowedSimple) {
         if (key in body) entry[key] = body[key];
       }
       if ('team1Key' in body && VALID_TEAM_KEYS.includes(body.team1Key)) entry.team1 = data.teams[body.team1Key];
       if ('team2Key' in body && VALID_TEAM_KEYS.includes(body.team2Key)) entry.team2 = data.teams[body.team2Key];
+
+      // ffa (free-for-all): editing which colors take part re-shapes the
+      // per-color scores object, preserving any scores already entered for
+      // colors that remain in the new list.
+      if ('participants' in body && Array.isArray(body.participants)) {
+        const validParts = [...new Set(body.participants.filter((k) => VALID_TEAM_KEYS.includes(k)))];
+        if (validParts.length >= 2) {
+          const oldScores = entry.scores || {};
+          entry.participants = validParts;
+          entry.scores = Object.fromEntries(validParts.map((k) => [k, oldScores[k] ?? null]));
+        }
+      }
+      // per-color quick score edits arrive as score_green / score_blue / ...
+      for (const teamKey of VALID_TEAM_KEYS) {
+        const field = `score_${teamKey}`;
+        if (field in body) {
+          entry.scores = entry.scores || {};
+          const val = body[field];
+          entry.scores[teamKey] = (val === '' || val === null || val === undefined) ? null : Number(val);
+        }
+      }
 
       data.matches[idx] = entry;
       await writeData(data);

@@ -483,6 +483,39 @@ a { color: inherit; }
 
 .mcard-meta span { display: inline-flex; align-items: center; gap: 4px; }
 
+/* free-for-all card: several colors compete in the same heat at once
+   (e.g. folk games), one winner takes the round */
+.ffa-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ffa-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 9px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ffa-row-winner {
+  background: rgba(255, 201, 74, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 201, 74, 0.3);
+}
+
+.ffa-row .team-name { flex: 1; }
+
+.ffa-score {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--cream);
+  min-width: 24px;
+  text-align: right;
+}
+
 /* event card (no score) */
 .ecard {
   position: relative;

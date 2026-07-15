@@ -407,6 +407,28 @@
 
 .field select option { background: #2B1049; color: var(--cream); }
 
+/* participant color picker for ffa (free-for-all) matches */
+.checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checkbox-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--cream);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.checkbox-row input[type="checkbox"] { accent-color: var(--gold-500); }
+
 /* sports manager rows */
 .sport-row {
   display: flex;
